@@ -319,7 +319,7 @@ return_type DynamixelHardware::write(
   if (std::any_of(
         joints_.cbegin(), joints_.cend(), [](auto j) { return j.command.effort != 0.0; })) {
     // Effort control
-    if (set_control_mode(ControlMode::Currrent) == return_type::ERROR) {
+    if (set_control_mode(ControlMode::Current) == return_type::ERROR) {
       return return_type::ERROR;
     }
     for (uint i = 0; i < ids.size(); i++) {
@@ -416,7 +416,7 @@ return_type DynamixelHardware::set_control_mode(const ControlMode & mode, const 
   const char * log = nullptr;
   mode_changed_ = false;
 
-  if (mode == ControlMode::Currrent && (force_set || control_mode_ != ControlMode::Currrent)) {
+  if (mode == ControlMode::Current && (force_set || control_mode_ != ControlMode::Current)) {
     bool torque_enabled = torque_enabled_;
     if (torque_enabled) {
       enable_torque(false);
@@ -429,7 +429,7 @@ return_type DynamixelHardware::set_control_mode(const ControlMode & mode, const 
       }
     }
     RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "Current control");
-    control_mode_ = ControlMode::Currrent;
+    control_mode_ = ControlMode::Current;
 
     if (torque_enabled) {
       enable_torque(true);
@@ -481,7 +481,7 @@ return_type DynamixelHardware::set_control_mode(const ControlMode & mode, const 
       enable_torque(true);
     }
   } else if (
-    control_mode_ != ControlMode::Currrent && control_mode_ != ControlMode::Velocity &&
+    control_mode_ != ControlMode::Current && control_mode_ != ControlMode::Velocity &&
     control_mode_ != ControlMode::Position) {
     RCLCPP_FATAL(
       rclcpp::get_logger(kDynamixelHardware),
