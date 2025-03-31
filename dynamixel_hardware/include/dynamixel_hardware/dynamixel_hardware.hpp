@@ -17,18 +17,18 @@
 
 #include <dynamixel_workbench_toolbox/dynamixel_workbench.h>
 
-#include <hardware_interface/base_interface.hpp>
+#include <map>
+#include <vector>
+
 #include <hardware_interface/handle.hpp>
 #include <hardware_interface/hardware_info.hpp>
 #include <hardware_interface/system_interface.hpp>
-#include <hardware_interface/types/hardware_interface_return_values.hpp>
-#include <hardware_interface/types/hardware_interface_status_values.hpp>
-#include <map>
-#include <vector>
+#include <rclcpp_lifecycle/state.hpp>
 
 #include "dynamixel_hardware/visiblity_control.h"
 #include "rclcpp/macros.hpp"
 
+using hardware_interface::CallbackReturn;
 using hardware_interface::return_type;
 
 namespace dynamixel_hardware
@@ -44,9 +44,11 @@ struct Joint
 {
   JointValue state{};
   JointValue command{};
+  JointValue prev_command{};
 };
 
-enum class ControlMode {
+enum class ControlMode
+{
   Position,
   Velocity,
   Torque,
@@ -57,14 +59,13 @@ enum class ControlMode {
   PWM,
 };
 
-class DynamixelHardware
-: public hardware_interface::BaseInterface<hardware_interface::SystemInterface>
+class DynamixelHardware : public hardware_interface::SystemInterface
 {
 public:
   RCLCPP_SHARED_PTR_DEFINITIONS(DynamixelHardware)
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type configure(const hardware_interface::HardwareInfo & info) override;
+  CallbackReturn on_init(const hardware_interface::HardwareInfo & info) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
@@ -73,16 +74,16 @@ public:
   std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type start() override;
+  CallbackReturn on_activate(const rclcpp_lifecycle::State & previous_state) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type stop() override;
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & previous_state) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type read() override;
+  return_type read(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type write() override;
+  return_type write(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
 private:
   return_type enable_torque(const bool enabled);
@@ -91,6 +92,10 @@ private:
 
   return_type reset_command();
 
+  CallbackReturn set_joint_positions();
+  CallbackReturn set_joint_velocities();
+  CallbackReturn set_joint_params();
+
   DynamixelWorkbench dynamixel_workbench_;
   std::map<const char * const, const ControlItem *> control_items_;
   std::vector<Joint> joints_;
@@ -98,6 +103,7 @@ private:
   std::vector<double> effort_to_current_coefs_;
   bool torque_enabled_{false};
   ControlMode control_mode_{ControlMode::Position};
+  bool mode_changed_{false};
   bool use_dummy_{false};
 };
 }  // namespace dynamixel_hardware
