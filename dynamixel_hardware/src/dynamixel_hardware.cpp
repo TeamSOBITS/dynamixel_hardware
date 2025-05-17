@@ -81,14 +81,14 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
     return CallbackReturn::SUCCESS;
   }
 
-  auto usb_port = info_.hardware_parameters.at("usb_port");
+  auto port_name = info_.hardware_parameters.at("port_name");
   auto baud_rate = std::stoi(info_.hardware_parameters.at("baud_rate"));
   const char * log = nullptr;
 
-  RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "usb_port: %s", usb_port.c_str());
+  RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "port_name: %s", port_name.c_str());
   RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "baud_rate: %d", baud_rate);
 
-  if (!dynamixel_workbench_.init(usb_port.c_str(), baud_rate, &log)) {
+  if (!dynamixel_workbench_.init(port_name.c_str(), baud_rate, &log)) {
     RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
     return CallbackReturn::ERROR;
   }
