@@ -45,6 +45,7 @@ struct Joint
   JointValue state{};
   JointValue command{};
   JointValue prev_command{};
+  int control_mode{0};
   double gear_ratio{1.0};
 };
 
@@ -58,6 +59,7 @@ enum class ControlMode
   MultiTurn,
   CurrentBasedPosition,
   PWM,
+  None,
 };
 
 class DynamixelHardware : public hardware_interface::SystemInterface
@@ -92,7 +94,7 @@ public:
 private:
   return_type enable_torque(const bool enabled);
 
-  return_type set_control_mode(const ControlMode & mode, const bool force_set = false);
+  return_type set_control_mode();
 
   return_type reset_command();
 
@@ -107,9 +109,13 @@ private:
   std::vector<uint8_t> joint_ids_;
   std::vector<uint8_t> joint_ids_ttl_;
   std::vector<uint8_t> joint_ids_rs_;
+  std::vector<uint8_t> joint_pos_ids_;
+  std::vector<uint8_t> joint_vel_ids_;
+  std::vector<uint8_t> joint_curt_ids_;
+  std::vector<uint8_t> joint_pos_real_ids_;
+  std::vector<uint8_t> joint_vel_real_ids_;
+  std::vector<uint8_t> joint_curt_real_ids_;
   bool torque_enabled_{false};
-  ControlMode control_mode_{ControlMode::Position};
-  bool mode_changed_{false};
   bool use_dummy_{false};
 };
 }  // namespace dynamixel_hardware
