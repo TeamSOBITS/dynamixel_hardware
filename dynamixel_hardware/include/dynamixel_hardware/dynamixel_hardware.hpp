@@ -69,6 +69,9 @@ public:
   CallbackReturn on_init(const hardware_interface::HardwareInfo & info) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
+  CallbackReturn on_configure(const rclcpp_lifecycle::State & previous_state) override;
+
+  DYNAMIXEL_HARDWARE_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
 
   DYNAMIXEL_HARDWARE_PUBLIC

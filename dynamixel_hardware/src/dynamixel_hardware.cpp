@@ -53,7 +53,7 @@ constexpr const char * const kExtraJointParameters[] = {
 
 CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo & info)
 {
-  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "configure");
+  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "init");
   if (hardware_interface::SystemInterface::on_init(info) != CallbackReturn::SUCCESS) {
     return CallbackReturn::ERROR;
   }
@@ -106,11 +106,6 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
       return CallbackReturn::ERROR;
     }
   }
-
-  enable_torque(false);
-  set_control_mode(ControlMode::Position, true);
-  set_joint_params();
-  enable_torque(true);
 
   const ControlItem * goal_position =
     dynamixel_workbench_.getItemInfo(joint_ids_[0], kGoalPositionItem);
@@ -186,6 +181,35 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
   return CallbackReturn::SUCCESS;
 }
 
+CallbackReturn DynamixelHardware::on_configure(const rclcpp_lifecycle::State & /* previous_state */) 
+{
+  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "configure");
+
+  for (uint i = 0; i < joints_.size(); i++) {
+    if (use_dummy_ && std::isnan(joints_[i].state.position)) {
+      joints_[i].state.position = 0.0;
+      joints_[i].state.velocity = 0.0;
+      joints_[i].state.effort = 0.0;
+    }
+  }
+
+  if (read(rclcpp::Time{}, rclcpp::Duration(0, 0)) == return_type::ERROR) {
+    RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "Read failed in on_configure");
+    return CallbackReturn::ERROR;
+  }
+
+  enable_torque(false);
+  set_control_mode(ControlMode::Position, true);
+  set_joint_params();
+  // Ideally torque should be enabled in on_activate(), but this appears to cause issues 
+  // due to conflict with RT loop read/write calls, so it is here instead
+  enable_torque(true);
+
+  return CallbackReturn::SUCCESS;
+}
+
+// TODO - add on_cleanup to disable torque
+
 std::vector<hardware_interface::StateInterface> DynamixelHardware::export_state_interfaces()
 {
   RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "export_state_interfaces");
@@ -221,19 +245,11 @@ std::vector<hardware_interface::CommandInterface> DynamixelHardware::export_comm
   return command_interfaces;
 }
 
-CallbackReturn DynamixelHardware::on_activate(const rclcpp_lifecycle::State & /* previous_state */)
+CallbackReturn DynamixelHardware::on_activate(
+  const rclcpp_lifecycle::State & /* previous_state */)
 {
-  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "start");
-  for (uint i = 0; i < joints_.size(); i++) {
-    if (use_dummy_ && std::isnan(joints_[i].state.position)) {
-      joints_[i].state.position = 0.0;
-      joints_[i].state.velocity = 0.0;
-      joints_[i].state.effort = 0.0;
-    }
-  }
-  read(rclcpp::Time{}, rclcpp::Duration(0, 0));
+  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "activate");
   reset_command();
-  write(rclcpp::Time{}, rclcpp::Duration(0, 0));
 
   return CallbackReturn::SUCCESS;
 }
@@ -241,7 +257,7 @@ CallbackReturn DynamixelHardware::on_activate(const rclcpp_lifecycle::State & /*
 CallbackReturn DynamixelHardware::on_deactivate(
   const rclcpp_lifecycle::State & /* previous_state */)
 {
-  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "stop");
+  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "deactivate");
   return CallbackReturn::SUCCESS;
 }
 
@@ -265,6 +281,7 @@ return_type DynamixelHardware::read(
       kPresentPositionVelocityCurrentIndex, ids.data(), ids.size(), &log))
   {
     RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
+    return return_type::ERROR;
   }
 
   if (!dynamixel_workbench_.getSyncReadData(
@@ -309,8 +326,12 @@ return_type DynamixelHardware::write(
 {
   if (use_dummy_) {
     for (auto & joint : joints_) {
-      joint.prev_command.position = joint.command.position;
       joint.state.position = joint.command.position;
+      joint.state.velocity = joint.command.velocity;
+      joint.state.effort = joint.command.effort;
+      joint.prev_command.position = joint.command.position;
+      joint.prev_command.velocity = joint.command.velocity;
+      joint.prev_command.effort = joint.command.effort;
     }
     return return_type::OK;
   }
