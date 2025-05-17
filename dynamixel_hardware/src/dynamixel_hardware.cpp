@@ -46,6 +46,9 @@ constexpr const char * const kExtraJointParameters[] = {
   "Position_D_Gain",
   "Velocity_P_Gain",
   "Velocity_I_Gain",
+  "Feedforward_2nd_Gain",
+  "Feedforward_1st_Gain",
+  "Goal_Current",
 };
 
 CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo & info)
