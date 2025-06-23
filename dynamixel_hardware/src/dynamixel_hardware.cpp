@@ -76,7 +76,7 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
     joints_[i].prev_command.effort = joints_[i].command.effort;
     if (info_.joints[i].parameters.find("control_mode") != info_.joints[i].parameters.end()) {
       joints_[i].control_mode = std::stoi(info_.joints[i].parameters.at("control_mode"));
-      if (joints_[i].control_mode = 0 ||
+      if (joints_[i].control_mode == 0 ||
           joints_[i].control_mode == 4 ||
           joints_[i].control_mode == 5 ||
           joints_[i].control_mode == 6)
@@ -95,7 +95,7 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
         joint_curt_real_ids_.push_back(joint_ids_[i]);
       } else {
         RCLCPP_ERROR(
-          rclcpp::get_logger(kDynamixelHardware), "Control mode not implemented");
+          rclcpp::get_logger(kDynamixelHardware), "Control mode not implemented: %d", joints_[i].control_mode);
         return CallbackReturn::ERROR;
       }
     }
@@ -388,11 +388,11 @@ return_type DynamixelHardware::read(
       if(it != joint_ids_.end()){
         int index = std::distance(joint_ids_.begin(), it);
         joints_[index].state.position = dynamixel_workbench_.convertValue2Radian(
-          ids[i], positions[i] / joints_[i].gear_ratio);
+          ids[i], positions[i]) / joints_[i].gear_ratio;
         joints_[index].state.velocity = dynamixel_workbench_.convertValue2Velocity(
-          ids[i], velocities[i] / joints_[i].gear_ratio);
+          ids[i], velocities[i]) / joints_[i].gear_ratio;
         joints_[index].state.effort = dynamixel_workbench_.convertValue2Current(
-          currents[i] * joints_[i].gear_ratio);
+          currents[i]) * joints_[i].gear_ratio;
       }
     }
   }
