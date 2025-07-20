@@ -39,11 +39,11 @@
 
 本リポジトリは[ROBOTIS Dynamixel](https://emanual.robotis.com/docs/en/dxl/)アクチュエタを動作させるための[`ros2_control`](https://github.com/ros-controls/ros2_control)の[`SystemInterface`](https://github.com/ros-controls/ros2_control/blob/master/hardware_interface/include/hardware_interface/system_interface.hpp)を提供します.
 
-`ros2_control`のアーキテクャャり全のDynamixelアクチュータ対応きると思れれます．
+`ros2_control`のアクチュエータにより全のDynamixelアクチュータ対応きると思われます．
 
 > [!IMPORTANT]
-> オリジルルのパッケージと異り本フォークは異なるアクチュエータにおける複数制御方法に対応しています．
-また，ギア比の設定やオフセットにも対応しています．
+> オリジナルのパッケージと異り本フォークは異なるアクチュエータにおける複数制御方法に対応しています．
+また，ギア比の設定やオフセット等にも対応しています．
 その一方，制御方法の切り替えはできなくなっております．
 
 <p align="right">(<a href="#readme-top">上に戻る</a>)</p>
@@ -238,7 +238,7 @@
     allow_partial_joints_goal: true
 ```
 
-3. 最後に，設定したパラメータ等をロボットを実行する際に，立ち上げます．
+3. 最後に，設定したパラメータ等をロボットを実行する際に，コントローラを立ち上げます．
 ```py
 robot_description = os.path.join(get_package_share_directory(
     'sobit_light_description'), 
@@ -311,8 +311,8 @@ robot_state_publisher_node = Node(
 <!-- マイルストーン -->
 ## マイルストーン
 
-- [-] 異るアクチュエータの制御方法設定に対応
-- [-] ギア比の設定
+- [x] 異るアクチュエータの制御方法設定に対応
+- [x] ギア比の設定
 - [] 複数御御方法の切り替え
 
 現時点のバッグや新規機能の依頼を確認するために[Issueページ][issues-url] をご覧ください．

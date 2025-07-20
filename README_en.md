@@ -305,8 +305,8 @@ robot_state_publisher_node = Node(
 
 ## Milestone
 
-- [-] Support for configuring control methods for different actuators
-- [-] Support for setting gear ratios
+- [x] Support for configuring control methods for different actuators
+- [x] Support for setting gear ratios
 - [] Switching between multiple control methods
 
 See the [open issues][issues-url] for a full list of proposed features (and known issues).
