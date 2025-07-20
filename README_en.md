@@ -328,13 +328,13 @@ See the [open issues][issues-url] for a full list of proposed features (and know
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-[contributors-shield]: https://img.shields.io/github/contributors/TeamSOBITS/dynamixel_harware.svg?style=for-the-badge
-[contributors-url]: https://github.com/TeamSOBITS/dynamixel_harware/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/TeamSOBITS/dynamixel_harware.svg?style=for-the-badge
-[forks-url]: https://github.com/TeamSOBITS/dynamixel_harware/network/members
-[stars-shield]: https://img.shields.io/github/stars/TeamSOBITS/dynamixel_harware.svg?style=for-the-badge
-[stars-url]: https://github.com/TeamSOBITS/dynamixel_harware/stargazers
-[issues-shield]: https://img.shields.io/github/issues/TeamSOBITS/dynamixel_harware.svg?style=for-the-badge
-[issues-url]: https://github.com/TeamSOBITS/dynamixel_harware/issues
-[license-shield]: https://img.shields.io/github/license/TeamSOBITS/dynamixel_harware.svg?style=for-the-badge
+[contributors-shield]: https://img.shields.io/github/contributors/TeamSOBITS/dynamixel_hardware.svg?style=for-the-badge
+[contributors-url]: https://github.com/TeamSOBITS/dynamixel_hardware/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/TeamSOBITS/dynamixel_hardware.svg?style=for-the-badge
+[forks-url]: https://github.com/TeamSOBITS/dynamixel_hardware/network/members
+[stars-shield]: https://img.shields.io/github/stars/TeamSOBITS/dynamixel_hardware.svg?style=for-the-badge
+[stars-url]: https://github.com/TeamSOBITS/dynamixel_hardware/stargazers
+[issues-shield]: https://img.shields.io/github/issues/TeamSOBITS/dynamixel_hardware.svg?style=for-the-badge
+[issues-url]: https://github.com/TeamSOBITS/dynamixel_hardware/issues
+[license-shield]: https://img.shields.io/github/license/TeamSOBITS/dynamixel_hardware.svg?style=for-the-badge
 [license-url]: LICENSE
