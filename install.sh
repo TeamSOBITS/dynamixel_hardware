@@ -20,6 +20,6 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 
 # Serial Access
-sudo usermod -a -G dialout $USER
+sudo usermod -aG dialout $USERNAME
 
 echo "╚══╣ Install: Dynamixel Hardware (FINISHED) ╠══╝"
