@@ -53,7 +53,7 @@ constexpr const char * const kExtraJointParameters[] = {
   "Goal_Current",
 };
 
-CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo & info)
+CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComponentInterfaceParams & info)
 {
   RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "init");
   if (hardware_interface::SystemInterface::on_init(info) != CallbackReturn::SUCCESS) {
@@ -445,6 +445,8 @@ return_type DynamixelHardware::write(
     set_joint_currents();
     return return_type::OK;
   }
+
+  return return_type::ERROR;
 }
 
 return_type DynamixelHardware::enable_torque(const bool enabled)
