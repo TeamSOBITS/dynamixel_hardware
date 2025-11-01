@@ -28,11 +28,11 @@
 #include "dynamixel_hardware/visiblity_control.h"
 #include "rclcpp/macros.hpp"
 
-using hardware_interface::CallbackReturn;
-using hardware_interface::return_type;
-
 namespace dynamixel_hardware
 {
+using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+using return_type = hardware_interface::return_type;
+
 struct JointValue
 {
   double position{0.0};
