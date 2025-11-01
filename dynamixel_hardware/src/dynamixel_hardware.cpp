@@ -20,9 +20,13 @@
 #include <string>
 #include <vector>
 
+#include "hardware_interface/handle.hpp"
+#include "hardware_interface/hardware_info.hpp"
+#include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_return_values.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 
 namespace dynamixel_hardware
 {
@@ -55,7 +59,7 @@ constexpr const char * const kExtraJointParameters[] = {
 
 CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComponentInterfaceParams & info)
 {
-  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "init");
+  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "on_init");
   if (hardware_interface::SystemInterface::on_init(info) != CallbackReturn::SUCCESS) {
     return CallbackReturn::ERROR;
   }
@@ -74,6 +78,7 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
     joints_[i].prev_command.position = joints_[i].command.position;
     joints_[i].prev_command.velocity = joints_[i].command.velocity;
     joints_[i].prev_command.effort = joints_[i].command.effort;
+
     if (info_.joints[i].parameters.find("control_mode") != info_.joints[i].parameters.end()) {
       joints_[i].control_mode = std::stoi(info_.joints[i].parameters.at("control_mode"));
       if (joints_[i].control_mode == 0 ||
@@ -423,7 +428,6 @@ return_type DynamixelHardware::write(
       }))
   {
     set_joint_velocities();
-    return return_type::OK;
   }
 
   // Position control
@@ -433,7 +437,6 @@ return_type DynamixelHardware::write(
       }))
   {
     set_joint_positions();
-    return return_type::OK;
   }
 
   // Effort control
@@ -443,10 +446,9 @@ return_type DynamixelHardware::write(
       })) 
   {
     set_joint_currents();
-    return return_type::OK;
   }
-
-  return return_type::ERROR;
+  
+  return return_type::OK;
 }
 
 return_type DynamixelHardware::enable_torque(const bool enabled)
@@ -460,7 +462,6 @@ return_type DynamixelHardware::enable_torque(const bool enabled)
         return return_type::ERROR;
       }
     }
-    // reset_command();
     RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "Torque enabled");
   } else if (!enabled && torque_enabled_) {
     for (uint i = 0; i < info_.joints.size(); ++i) {
