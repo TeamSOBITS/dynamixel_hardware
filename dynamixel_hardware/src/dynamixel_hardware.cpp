@@ -253,6 +253,11 @@ CallbackReturn DynamixelHardware::on_configure(const rclcpp_lifecycle::State & /
     return CallbackReturn::ERROR;
   }
 
+  if (info_.hardware_parameters.find("gripper_open_direction") != info_.hardware_parameters.end()) {
+    gripper_open_direction_ = info_.hardware_parameters["gripper_open_direction"];
+  }
+
+
   enable_torque(false);
   set_control_mode();
   set_joint_params();
@@ -416,6 +421,160 @@ return_type DynamixelHardware::write(
     return return_type::OK;
   }
 
+    for (size_t i = 0; i < joints_.size(); ++i) {
+      if (joints_[i].control_mode == 6) {
+          // Only store commands that came from the action server (not our frozen values)
+          if (!gripper_locked_) {
+            last_user_cmd_pos_ = joints_[i].command.position;
+
+            // RCLCPP_INFO(
+            //     rclcpp::get_logger(kDynamixelHardware),
+            //     "[DEBUG][USER_CMD] Saved user command pos=%.3f",
+            //     last_user_cmd_pos_);
+        }
+
+      }
+  }
+  
+    //----------------------------------------------
+    //  GRIPPER SAFETY LOGIC (FINAL CLEAN VERSION)
+    //----------------------------------------------
+
+    const double kCurrentLimit_mA   = 1200.0;  // Overcurrent threshold
+    const double kReleaseCurrent_mA = 400.0;   // Current indicating load is gone
+    const double kOpenThresholdRad  = 0.15;    // Required motion to count as "opening"
+    const double kStillEpsilonRad   = 0.02;    // Position delta to consider "not moving"
+
+    //-------------------------------
+    // A) Detect overcurrent → LOCK
+    //-------------------------------
+    for (size_t i = 0; i < joints_.size(); ++i) {
+      if (joints_[i].control_mode == 6 &&
+          !std::isnan(joints_[i].state.effort) &&
+          joints_[i].state.effort > kCurrentLimit_mA)
+      {
+        if (!gripper_locked_) {
+          gripper_locked_       = true;
+          gripper_hold_position_ = joints_[i].state.position;
+
+          RCLCPP_WARN(
+            rclcpp::get_logger(kDynamixelHardware),
+            "[LOCK] Overcurrent on %s. Holding at %.3f rad",
+            info_.joints[i].name.c_str(),
+            gripper_hold_position_);
+        }
+      }
+    }
+
+    //-------------------------------
+    // B) Detect USER OPEN INTENT
+    //-------------------------------
+    bool user_requested_open = false;
+
+    if (gripper_locked_) {
+        for (size_t i = 0; i < joints_.size(); ++i) {
+            if (joints_[i].control_mode == 6) {
+
+                double user_cmd = last_user_cmd_pos_;
+
+                if (std::isnan(user_cmd)) continue;
+
+                bool open_intent =
+                    (gripper_open_direction_ == "positive")
+                        ? (user_cmd > gripper_hold_position_ + kOpenThresholdRad)
+                        : (user_cmd < gripper_hold_position_ - kOpenThresholdRad);
+                
+                RCLCPP_INFO(
+                  rclcpp::get_logger(kDynamixelHardware),
+                  "[DEBUG][OPEN_CHECK] hold=%.3f user_cmd=%.3f threshold=%.3f → open_intent=%d",
+                  gripper_hold_position_,
+                  user_cmd,
+                  kOpenThresholdRad,
+                  open_intent);
+
+
+                if (open_intent) {
+                    user_requested_open = true;
+                }
+            }
+        }
+    }
+
+
+    //----------------------------------------------
+    // C) Detect SAFE passive unlock (object removed)
+    //----------------------------------------------
+    bool passive_safe_unlock = false;
+
+    if (gripper_locked_) {
+      for (size_t i = 0; i < joints_.size(); ++i) {
+        if (joints_[i].control_mode == 6) {
+
+          double current = joints_[i].state.effort;
+          double cmd     = joints_[i].command.position;
+          double pos     = joints_[i].state.position;
+
+          bool low_current = (!std::isnan(current) && current < kReleaseCurrent_mA);
+          bool not_moving  = (std::fabs(cmd - pos) < kStillEpsilonRad);
+
+          // RCLCPP_INFO(
+          //   rclcpp::get_logger(kDynamixelHardware),
+          //   "[DEBUG][PASSIVE] current=%.1f cmd=%.3f pos=%.3f diff=%.3f → low_current=%d not_moving=%d",
+          //   current,
+          //   cmd,
+          //   pos,
+          //   std::fabs(cmd - pos),
+          //   low_current,
+          //   not_moving);
+
+
+          if (low_current && not_moving && !user_requested_open) {
+            passive_safe_unlock = true;
+          }
+        }
+      }
+    }
+
+    //---------------------------
+    // D) UNLOCK DECISION
+    //---------------------------
+
+    // 1) User wants to open → ALWAYS UNLOCK (ignores current)
+    if (gripper_locked_ && user_requested_open) {
+      gripper_locked_ = false;
+
+      RCLCPP_WARN(
+        rclcpp::get_logger(kDynamixelHardware),
+        "[UNLOCK] User requested OPEN → unlocking immediately");
+    }
+
+    // 2) Passive safe unlock (object removed, relaxed)
+    else if (gripper_locked_ && passive_safe_unlock) {
+      gripper_locked_ = false;
+
+      RCLCPP_WARN(
+        rclcpp::get_logger(kDynamixelHardware),
+        "[UNLOCK] Current safe & no motion → passive unlock");
+    }
+
+    //------------------------------------------
+    // E) If still locked → FREEZE MOVEMENT
+    //------------------------------------------
+    if (gripper_locked_) {
+
+      for (size_t i = 0; i < joints_.size(); ++i) {
+        if (joints_[i].control_mode == 6) {
+          joints_[i].command.position      = gripper_hold_position_;
+          joints_[i].prev_command.position = gripper_hold_position_;
+        }
+      }
+
+      // Keep gripper still
+      set_joint_positions();
+      return return_type::OK;
+    }
+
+
   // Velocity control
   if (std::any_of(
       joints_.cbegin(), joints_.cend(), [](auto j) {
@@ -445,6 +604,21 @@ return_type DynamixelHardware::write(
     set_joint_currents();
     return return_type::OK;
   }
+  // 🔍 DEBUG: ALWAYS print hand_joint state (control_mode == 6)
+  for (size_t i = 0; i < joints_.size(); i++) {
+    if (joints_[i].control_mode == 6) {
+      RCLCPP_INFO(
+        rclcpp::get_logger("DynamixelHardware"),
+        "[DEBUG] hand_joint pos=%.3f state_effort=%.3f cmd_effort=%.3f",
+        joints_[i].state.position,
+        joints_[i].state.effort,   // measured current
+        joints_[i].command.effort  
+      );
+    }
+  }
+  
+  return return_type::OK;
+  
 }
 
 return_type DynamixelHardware::enable_torque(const bool enabled)

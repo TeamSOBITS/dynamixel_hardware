@@ -117,6 +117,12 @@ private:
   std::vector<uint8_t> joint_curt_real_ids_;
   bool torque_enabled_{false};
   bool use_dummy_{false};
+  bool gripper_locked_{false};
+  double gripper_hold_position_{0.0};
+  bool user_sent_open_command_ = false;
+  std::string gripper_open_direction_ = "positive";
+  double last_user_cmd_pos_ = std::numeric_limits<double>::quiet_NaN();
+  
 };
 }  // namespace dynamixel_hardware
 
