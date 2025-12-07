@@ -24,6 +24,9 @@
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
 
+#include <std_msgs/msg/float64.hpp>
+
+
 namespace dynamixel_hardware
 {
 constexpr const char * kDynamixelHardware = "DynamixelHardware";
@@ -232,9 +235,39 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
     RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
     return CallbackReturn::ERROR;
   }
+  // Subscribe to raw hand goal topic for gripper unlock logic
+  internal_node_ = rclcpp::Node::make_shared("dynamixel_hw_internal_node");
+
+  // Subscribe to hand_goal_raw
+  raw_goal_sub_ = internal_node_->create_subscription<std_msgs::msg::Float64>(
+      "/sobit_pro/hand_goal_raw",
+      10,
+      std::bind(&DynamixelHardware::on_raw_hand_goal, this, std::placeholders::_1)
+  );
+
+  RCLCPP_INFO(
+      rclcpp::get_logger(kDynamixelHardware),
+      "Subscribed to /hand_goal_raw (internal node kept alive)");
+
 
   return CallbackReturn::SUCCESS;
 }
+
+void DynamixelHardware::on_raw_hand_goal(const std_msgs::msg::Float64::SharedPtr msg)
+{
+  double new_goal = msg->data;
+
+  // Just record the new goal
+  raw_user_goal_    = new_goal;
+  last_user_cmd_pos_ = new_goal;
+
+  RCLCPP_INFO(
+    rclcpp::get_logger(kDynamixelHardware),
+    "[HAND_GOAL] raw_user_goal updated to %.3f (locked=%d)",
+    raw_user_goal_,
+    gripper_locked_);
+}
+
 
 CallbackReturn DynamixelHardware::on_configure(const rclcpp_lifecycle::State & /* previous_state */) 
 {
@@ -409,6 +442,8 @@ return_type DynamixelHardware::write(
   const rclcpp::Time & /* time */,
   const rclcpp::Duration & /* period */)
 {
+  if (internal_node_) rclcpp::spin_some(internal_node_);
+
   if (use_dummy_) {
     for (auto & joint : joints_) {
       joint.state.position = joint.command.position;
@@ -421,40 +456,40 @@ return_type DynamixelHardware::write(
     return return_type::OK;
   }
 
-    for (size_t i = 0; i < joints_.size(); ++i) {
-      if (joints_[i].control_mode == 6) {
-          // Only store commands that came from the action server (not our frozen values)
-          if (!gripper_locked_) {
-            last_user_cmd_pos_ = joints_[i].command.position;
+  //   for (size_t i = 0; i < joints_.size(); ++i) {
+  //     if (joints_[i].control_mode == 6) {
+  //         // Only store commands that came from the action server (not our frozen values)
+  //         if (!gripper_locked_) {
+  //           last_user_cmd_pos_ = joints_[i].command.position;
 
-            // RCLCPP_INFO(
-            //     rclcpp::get_logger(kDynamixelHardware),
-            //     "[DEBUG][USER_CMD] Saved user command pos=%.3f",
-            //     last_user_cmd_pos_);
-        }
+  //           RCLCPP_INFO(
+  //               rclcpp::get_logger(kDynamixelHardware),
+  //               "[DEBUG][USER_CMD] Saved user command pos=%.3f",
+  //               last_user_cmd_pos_);
+  //       }
 
-      }
-  }
+  //     }
+  // }
   
     //----------------------------------------------
-    //  GRIPPER SAFETY LOGIC (FINAL CLEAN VERSION)
+    //  GRIPPER SAFETY LOGIC
     //----------------------------------------------
 
-    const double kCurrentLimit_mA   = 1200.0;  // Overcurrent threshold
+    const double kCurrentLimit_mA   = 650.0;  // Overcurrent threshold
     const double kReleaseCurrent_mA = 400.0;   // Current indicating load is gone
-    const double kOpenThresholdRad  = 0.15;    // Required motion to count as "opening"
+    const double kOpenThresholdRad  = 0.3;    // Required motion to count as "opening"
     const double kStillEpsilonRad   = 0.02;    // Position delta to consider "not moving"
 
-    //-------------------------------
-    // A) Detect overcurrent → LOCK
-    //-------------------------------
+    //=================================================
+    // A) Detect overcurrent → LOCK gripper
+    //=================================================
     for (size_t i = 0; i < joints_.size(); ++i) {
       if (joints_[i].control_mode == 6 &&
           !std::isnan(joints_[i].state.effort) &&
           joints_[i].state.effort > kCurrentLimit_mA)
       {
         if (!gripper_locked_) {
-          gripper_locked_       = true;
+          gripper_locked_        = true;
           gripper_hold_position_ = joints_[i].state.position;
 
           RCLCPP_WARN(
@@ -466,100 +501,51 @@ return_type DynamixelHardware::write(
       }
     }
 
-    //-------------------------------
-    // B) Detect USER OPEN INTENT
-    //-------------------------------
+    //=================================================
+    // B) Detect USER OPEN INTENT (only when locked)
+    //=================================================
     bool user_requested_open = false;
 
     if (gripper_locked_) {
-        for (size_t i = 0; i < joints_.size(); ++i) {
-            if (joints_[i].control_mode == 6) {
+      double user_cmd = raw_user_goal_;
 
-                double user_cmd = last_user_cmd_pos_;
+      if (!std::isnan(user_cmd)) {
+        
+        // SOBIT logic: "negative = open"
+        bool open_intent = (gripper_open_direction_ == "negative")
+                            ? (user_cmd < gripper_hold_position_ - kOpenThresholdRad)
+                            : (user_cmd > gripper_hold_position_ + kOpenThresholdRad);
 
-                if (std::isnan(user_cmd)) continue;
+        // RCLCPP_INFO(
+        //   rclcpp::get_logger(kDynamixelHardware),
+        //   "[DEBUG][OPEN_CHECK] hold=%.3f  user_cmd=%.3f  threshold=%.3f → open_intent=%d",
+        //   gripper_hold_position_, user_cmd, kOpenThresholdRad, open_intent);
 
-                bool open_intent =
-                    (gripper_open_direction_ == "positive")
-                        ? (user_cmd > gripper_hold_position_ + kOpenThresholdRad)
-                        : (user_cmd < gripper_hold_position_ - kOpenThresholdRad);
-                
-                RCLCPP_INFO(
-                  rclcpp::get_logger(kDynamixelHardware),
-                  "[DEBUG][OPEN_CHECK] hold=%.3f user_cmd=%.3f threshold=%.3f → open_intent=%d",
-                  gripper_hold_position_,
-                  user_cmd,
-                  kOpenThresholdRad,
-                  open_intent);
+        if (open_intent) {
+          user_requested_open = true;
 
-
-                if (open_intent) {
-                    user_requested_open = true;
-                }
-            }
-        }
-    }
-
-
-    //----------------------------------------------
-    // C) Detect SAFE passive unlock (object removed)
-    //----------------------------------------------
-    bool passive_safe_unlock = false;
-
-    if (gripper_locked_) {
-      for (size_t i = 0; i < joints_.size(); ++i) {
-        if (joints_[i].control_mode == 6) {
-
-          double current = joints_[i].state.effort;
-          double cmd     = joints_[i].command.position;
-          double pos     = joints_[i].state.position;
-
-          bool low_current = (!std::isnan(current) && current < kReleaseCurrent_mA);
-          bool not_moving  = (std::fabs(cmd - pos) < kStillEpsilonRad);
-
-          // RCLCPP_INFO(
-          //   rclcpp::get_logger(kDynamixelHardware),
-          //   "[DEBUG][PASSIVE] current=%.1f cmd=%.3f pos=%.3f diff=%.3f → low_current=%d not_moving=%d",
-          //   current,
-          //   cmd,
-          //   pos,
-          //   std::fabs(cmd - pos),
-          //   low_current,
-          //   not_moving);
-
-
-          if (low_current && not_moving && !user_requested_open) {
-            passive_safe_unlock = true;
-          }
         }
       }
     }
 
-    //---------------------------
-    // D) UNLOCK DECISION
-    //---------------------------
+    bool was_locked = gripper_locked_;
 
-    // 1) User wants to open → ALWAYS UNLOCK (ignores current)
+    // C) UNLOCK
     if (gripper_locked_ && user_requested_open) {
-      gripper_locked_ = false;
 
-      RCLCPP_WARN(
-        rclcpp::get_logger(kDynamixelHardware),
-        "[UNLOCK] User requested OPEN → unlocking immediately");
+        gripper_locked_ = false;
+
+        if (was_locked) {
+            RCLCPP_WARN(
+              rclcpp::get_logger(kDynamixelHardware),
+              "[UNLOCK] Transition: LOCKED → UNLOCKED");
+        }
     }
 
-    // 2) Passive safe unlock (object removed, relaxed)
-    else if (gripper_locked_ && passive_safe_unlock) {
-      gripper_locked_ = false;
 
-      RCLCPP_WARN(
-        rclcpp::get_logger(kDynamixelHardware),
-        "[UNLOCK] Current safe & no motion → passive unlock");
-    }
-
-    //------------------------------------------
-    // E) If still locked → FREEZE MOVEMENT
-    //------------------------------------------
+    //=================================================
+    // D) If still locked → FREEZE movement
+    //=================================================
     if (gripper_locked_) {
 
       for (size_t i = 0; i < joints_.size(); ++i) {
@@ -569,7 +555,6 @@ return_type DynamixelHardware::write(
         }
       }
 
-      // Keep gripper still
       set_joint_positions();
       return return_type::OK;
     }
@@ -605,17 +590,17 @@ return_type DynamixelHardware::write(
     return return_type::OK;
   }
   // 🔍 DEBUG: ALWAYS print hand_joint state (control_mode == 6)
-  for (size_t i = 0; i < joints_.size(); i++) {
-    if (joints_[i].control_mode == 6) {
-      RCLCPP_INFO(
-        rclcpp::get_logger("DynamixelHardware"),
-        "[DEBUG] hand_joint pos=%.3f state_effort=%.3f cmd_effort=%.3f",
-        joints_[i].state.position,
-        joints_[i].state.effort,   // measured current
-        joints_[i].command.effort  
-      );
-    }
-  }
+  // for (size_t i = 0; i < joints_.size(); i++) {
+  //   if (joints_[i].control_mode == 6) {
+  //     RCLCPP_INFO(
+  //       rclcpp::get_logger("DynamixelHardware"),
+  //       "[DEBUG] hand_joint pos=%.3f state_effort=%.3f cmd_effort=%.3f",
+  //       joints_[i].state.position,
+  //       joints_[i].state.effort,   // measured current
+  //       joints_[i].command.effort  
+  //     );
+  //   }
+  // }
   
   return return_type::OK;
   

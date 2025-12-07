@@ -28,6 +28,12 @@
 #include "dynamixel_hardware/visiblity_control.h"
 #include "rclcpp/macros.hpp"
 
+#include <std_msgs/msg/float64.hpp>
+#include <rclcpp/subscription.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+
+
 using hardware_interface::CallbackReturn;
 using hardware_interface::return_type;
 
@@ -91,6 +97,11 @@ public:
   DYNAMIXEL_HARDWARE_PUBLIC
   return_type write(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
+  void set_raw_user_goal(double goal)
+  {
+    raw_user_goal_ = goal;
+  }
+
 private:
   return_type enable_torque(const bool enabled);
 
@@ -120,8 +131,14 @@ private:
   bool gripper_locked_{false};
   double gripper_hold_position_{0.0};
   bool user_sent_open_command_ = false;
-  std::string gripper_open_direction_ = "positive";
+  std::string gripper_open_direction_ = "negative";
   double last_user_cmd_pos_ = std::numeric_limits<double>::quiet_NaN();
+  double raw_user_goal_ = std::numeric_limits<double>::quiet_NaN();
+  rclcpp::Node::SharedPtr internal_node_;   // Node for internal use
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr raw_goal_sub_;
+  void on_raw_hand_goal(const std_msgs::msg::Float64::SharedPtr msg);
+  
+
   
 };
 }  // namespace dynamixel_hardware
