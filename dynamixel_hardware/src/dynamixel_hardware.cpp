@@ -65,6 +65,7 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
 
   for (uint i = 0; i < info_.joints.size(); i++) {
     joint_ids_[i] = std::stoi(info_.joints[i].parameters.at("id"));
+    joints_[i].name = info_.joints[i].name;
     joints_[i].state.position = std::numeric_limits<double>::quiet_NaN();
     joints_[i].state.velocity = std::numeric_limits<double>::quiet_NaN();
     joints_[i].state.effort = std::numeric_limits<double>::quiet_NaN();
@@ -113,7 +114,28 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
     {
       joint_ids_rs_.push_back(joint_ids_[i]);
     }
-    RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "joint_id %d: %d", i, joint_ids_[i]);
+
+    // Mimic joint handling
+    if (info_.joints[i].parameters.count("mimic")) {
+      std::string leader_name = info_.joints[i].parameters.at("mimic");
+      
+      // Find the index of the leader
+      for (size_t j = 0; j < joints_.size(); ++j) {
+        if (joints_[j].name == leader_name) {
+          joints_[i].mimic_index = j;
+          break;
+        }
+      }
+      
+      // Parse multiplier/offset
+      if (info_.joints[i].parameters.count("multiplier")) {
+        joints_[i].mimic_multiplier = std::stod(info_.joints[i].parameters.at("multiplier"));
+      }
+      if (info_.joints[i].parameters.count("offset")) {
+        joints_[i].mimic_offset = std::stod(info_.joints[i].parameters.at("offset"));
+      }
+    }
+  
   }
 
   if (
@@ -392,7 +414,25 @@ return_type DynamixelHardware::read(
         joints_[index].state.velocity = dynamixel_workbench_.convertValue2Velocity(
           ids[i], velocities[i]) / joints_[i].gear_ratio;
         joints_[index].state.effort = dynamixel_workbench_.convertValue2Current(
-          currents[i]) * joints_[i].gear_ratio;
+          currents[i]) * joints_[i].gear_ratio; // TODO: fix index
+      }
+    }
+  }
+
+  // Update Mimic States
+  for (auto & joint : joints_) {
+    if (joint.mimic_index != -1) {
+      const auto & leader = joints_[joint.mimic_index];
+      double m = joint.mimic_multiplier;
+      
+      joint.state.position = (m * leader.state.position) + joint.mimic_offset;
+      joint.state.velocity = m * leader.state.velocity;
+      
+      // Physically consistent Effort: T_mimic = T_src / multiplier
+      if (std::abs(m) > 1e-6) {
+          joint.state.effort = leader.state.effort / m;
+      } else {
+        joint.state.effort = 0.0; // Avoid division by zero, but this is a non-physical case
       }
     }
   }
@@ -404,14 +444,30 @@ return_type DynamixelHardware::write(
   const rclcpp::Time & /* time */,
   const rclcpp::Duration & /* period */)
 {
+  // Update commands for mimic joints if they are linked to physical IDs
+  for (auto & joint : joints_) {
+    if (joint.mimic_index != -1) {
+      const auto & src = joints_[joint.mimic_index];
+      double m = joint.mimic_multiplier;
+
+      joint.command.position = (m * src.command.position) + joint.mimic_offset;
+      joint.command.velocity = m * src.command.velocity;
+      
+      if (std::abs(m) > 1e-6) {
+        joint.command.effort = src.command.effort / m;
+      } else {
+        joint.command.effort = 0.0; // Avoid division by zero, but this is a non-physical case
+      }
+    }
+  }
+
   if (use_dummy_) {
     for (auto & joint : joints_) {
-      joint.state.position = joint.command.position;
-      joint.state.velocity = joint.command.velocity;
-      joint.state.effort = joint.command.effort;
-      joint.prev_command.position = joint.command.position;
-      joint.prev_command.velocity = joint.command.velocity;
-      joint.prev_command.effort = joint.command.effort;
+      if (!std::isnan(joint.command.position)) joint.state.position = joint.command.position;
+      if (!std::isnan(joint.command.velocity)) joint.state.velocity = joint.command.velocity;
+      if (!std::isnan(joint.command.effort))   joint.state.effort   = joint.command.effort;
+      
+      joint.prev_command = joint.command;
     }
     return return_type::OK;
   }
@@ -423,7 +479,6 @@ return_type DynamixelHardware::write(
       }))
   {
     set_joint_velocities();
-    return return_type::OK;
   }
 
   // Position control
@@ -433,7 +488,6 @@ return_type DynamixelHardware::write(
       }))
   {
     set_joint_positions();
-    return return_type::OK;
   }
 
   // Effort control
@@ -443,8 +497,9 @@ return_type DynamixelHardware::write(
       })) 
   {
     set_joint_currents();
-    return return_type::OK;
   }
+
+  return return_type::OK;
 }
 
 return_type DynamixelHardware::enable_torque(const bool enabled)

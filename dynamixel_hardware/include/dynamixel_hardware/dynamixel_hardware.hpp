@@ -28,11 +28,11 @@
 #include "dynamixel_hardware/visiblity_control.h"
 #include "rclcpp/macros.hpp"
 
-using hardware_interface::CallbackReturn;
-using hardware_interface::return_type;
-
 namespace dynamixel_hardware
 {
+using CallbackReturn = hardware_interface::CallbackReturn;
+using return_type = hardware_interface::return_type;
+
 struct JointValue
 {
   double position{0.0};
@@ -40,13 +40,18 @@ struct JointValue
   double effort{0.0};
 };
 
-struct Joint
-{
+struct Joint {
+  std::string name;
   JointValue state{};
   JointValue command{};
   JointValue prev_command{};
   int control_mode{0};
   double gear_ratio{1.0};
+
+  // Mimic joint parameters
+  int mimic_index{-1};  // -1 if not a mimic joint, otherwise index of the source joint
+  double mimic_multiplier{1.0};
+  double mimic_offset{0.0};
 };
 
 enum class ControlMode
@@ -115,6 +120,7 @@ private:
   std::vector<uint8_t> joint_pos_real_ids_;
   std::vector<uint8_t> joint_vel_real_ids_;
   std::vector<uint8_t> joint_curt_real_ids_;
+
   bool torque_enabled_{false};
   bool use_dummy_{false};
 };
