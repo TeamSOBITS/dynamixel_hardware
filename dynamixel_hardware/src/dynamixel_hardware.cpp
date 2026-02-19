@@ -79,6 +79,28 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
     joints_[i].prev_command.velocity = joints_[i].command.velocity;
     joints_[i].prev_command.effort = joints_[i].command.effort;
 
+  // Mimic Initialization (Jazzy HardwareInfo Style)
+  for (const auto & mimic_data : info_.mimic_joints) {
+    uint mimic_idx = mimic_data.joint_index;
+    uint src_idx = mimic_data.mimicked_joint_index;
+
+    if (mimic_idx < joints_.size() && src_idx < joints_.size()) {
+      joints_[mimic_idx].mimic_index = src_idx;
+      joints_[mimic_idx].mimic_multiplier = mimic_data.multiplier;
+      joints_[mimic_idx].mimic_offset = mimic_data.offset;
+
+      RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), 
+        "Mimic configured: Joint '%s' (index %d) follows '%s' (index %d) [mult: %f, offset: %f]", 
+        info_.joints[mimic_idx].name.c_str(), mimic_idx,
+        info_.joints[src_idx].name.c_str(), src_idx,
+        joints_[mimic_idx].mimic_multiplier, joints_[mimic_idx].mimic_offset);
+    } else {
+      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), 
+        "Invalid mimic configuration: mimic_index %d or source_index %d out of range", 
+        mimic_idx, src_idx);
+    }
+  }
+
     if (info_.joints[i].parameters.find("control_mode") != info_.joints[i].parameters.end()) {
       joints_[i].control_mode = std::stoi(info_.joints[i].parameters.at("control_mode"));
       if (joints_[i].control_mode == 0 ||
@@ -402,6 +424,24 @@ return_type DynamixelHardware::read(
     }
   }
 
+  // Update Mimic States
+  for (auto & joint : joints_) {
+    if (joint.mimic_index != -1) {
+      const auto & src = joints_[joint.mimic_index];
+      double m = joint.mimic_multiplier;
+
+      joint.state.position = (m * src.state.position) + joint.mimic_offset;
+      joint.state.velocity = m * src.state.velocity;
+      
+      // Physically consistent Effort: T_mimic = T_src / multiplier
+      if (std::abs(m) > 1e-6) {
+        joint.state.effort = src.state.effort / m;
+      } else {
+        joint.state.effort = 0.0; // Avoid division by zero, but this is a non-physical case
+      }
+    }
+  }
+
   return return_type::OK;
 }
 
@@ -409,6 +449,24 @@ return_type DynamixelHardware::write(
   const rclcpp::Time & /* time */,
   const rclcpp::Duration & /* period */)
 {
+  // Update commands for mimic joints if they are linked to physical IDs
+  for (auto & joint : joints_) {
+    if (joint.mimic_index != -1) {
+      const auto & src = joints_[joint.mimic_index];
+      double m = joint.mimic_multiplier;
+
+      joint.command.position = (m * src.command.position) + joint.mimic_offset;
+      joint.command.velocity = m * src.command.velocity;
+      
+      if (std::abs(m) > 1e-6) {
+        joint.command.effort = src.command.effort / m;
+      } else {
+        joint.command.effort = 0.0; // Avoid division by zero, but this is a non-physical case
+      }
+    }
+  }
+
+  // If in dummy mode, just copy commands to states and return
   if (use_dummy_) {
     for (auto & joint : joints_) {
       joint.state.position = joint.command.position;
