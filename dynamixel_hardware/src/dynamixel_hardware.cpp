@@ -121,7 +121,6 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
     RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "joint_id %d: %d", i, joint_ids_[i]);
   }
 
-
   // Mimic Initialization
   for (const auto & mimic_data : info_.mimic_joints) {
     uint mimic_idx = mimic_data.joint_index;
@@ -468,12 +467,11 @@ return_type DynamixelHardware::write(
   // If in dummy mode, just copy commands to states and return
   if (use_dummy_) {
     for (auto & joint : joints_) {
-      joint.state.position = joint.command.position;
-      joint.state.velocity = joint.command.velocity;
-      joint.state.effort = joint.command.effort;
-      joint.prev_command.position = joint.command.position;
-      joint.prev_command.velocity = joint.command.velocity;
-      joint.prev_command.effort = joint.command.effort;
+      if (!std::isnan(joint.command.position)) joint.state.position = joint.command.position;
+      if (!std::isnan(joint.command.velocity)) joint.state.velocity = joint.command.velocity;
+      if (!std::isnan(joint.command.effort))   joint.state.effort   = joint.command.effort;
+      
+      joint.prev_command = joint.command;
     }
     return return_type::OK;
   }
@@ -481,7 +479,7 @@ return_type DynamixelHardware::write(
   // Velocity control
   if (std::any_of(
       joints_.cbegin(), joints_.cend(), [](auto j) {
-        return j.command.velocity != j.prev_command.velocity;
+        return !std::isnan(j.command.velocity) && j.command.velocity != j.prev_command.velocity;
       }))
   {
     set_joint_velocities();
@@ -490,7 +488,7 @@ return_type DynamixelHardware::write(
   // Position control
   if (std::any_of(
       joints_.cbegin(), joints_.cend(), [](auto j) {
-        return j.command.position != j.prev_command.position;
+        return !std::isnan(j.command.position) && j.command.position != j.prev_command.position;
       }))
   {
     set_joint_positions();
@@ -499,7 +497,7 @@ return_type DynamixelHardware::write(
   // Effort control
   if (std::any_of(
       joints_.cbegin(), joints_.cend(), [](auto j) {
-        return j.command.effort != j.prev_command.effort;
+        return !std::isnan(j.command.effort) && j.command.effort != j.prev_command.effort;
       })) 
   {
     set_joint_currents();
