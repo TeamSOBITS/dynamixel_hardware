@@ -113,9 +113,12 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
       info_.joints[i].parameters.at("interface") == "rs")
     {
       joint_ids_rs_.push_back(joint_ids_[i]);
-    }
+    }  
+    RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "joint_id %d: %d", i, joint_ids_[i]);
+  }
 
-    // Mimic joint handling
+  // Mimic joint handling
+  for (size_t i = 0; i < info_.joints.size(); ++i) {
     if (info_.joints[i].parameters.count("mimic")) {
       std::string leader_name = info_.joints[i].parameters.at("mimic");
       
@@ -134,8 +137,11 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareInfo
       if (info_.joints[i].parameters.count("offset")) {
         joints_[i].mimic_offset = std::stod(info_.joints[i].parameters.at("offset"));
       }
+      RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), 
+        "Mimic configured: Joint '%s' follows '%s' [mult: %f, offset: %f, index: %d]",
+        joints_[i].name.c_str(), leader_name.c_str(),
+        joints_[i].mimic_multiplier, joints_[i].mimic_offset, joints_[i].mimic_index);
     }
-  
   }
 
   if (
@@ -435,6 +441,11 @@ return_type DynamixelHardware::read(
       } else {
         joint.state.effort = 0.0; // Avoid division by zero, but this is a non-physical case
       }
+
+      RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), 
+        "Mimic state updated: Joint '%s' follows '%s' [mult: %f, offset: %f]", 
+        joint.name.c_str(), joints_[joint.mimic_index].name.c_str(),
+        joint.mimic_multiplier, joint.mimic_offset);
     }
   }
 
