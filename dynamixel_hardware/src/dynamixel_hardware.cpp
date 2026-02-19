@@ -79,28 +79,6 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
     joints_[i].prev_command.velocity = joints_[i].command.velocity;
     joints_[i].prev_command.effort = joints_[i].command.effort;
 
-  // Mimic Initialization (Jazzy HardwareInfo Style)
-  for (const auto & mimic_data : info_.mimic_joints) {
-    uint mimic_idx = mimic_data.joint_index;
-    uint src_idx = mimic_data.mimicked_joint_index;
-
-    if (mimic_idx < joints_.size() && src_idx < joints_.size()) {
-      joints_[mimic_idx].mimic_index = src_idx;
-      joints_[mimic_idx].mimic_multiplier = mimic_data.multiplier;
-      joints_[mimic_idx].mimic_offset = mimic_data.offset;
-
-      RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), 
-        "Mimic configured: Joint '%s' (index %d) follows '%s' (index %d) [mult: %f, offset: %f]", 
-        info_.joints[mimic_idx].name.c_str(), mimic_idx,
-        info_.joints[src_idx].name.c_str(), src_idx,
-        joints_[mimic_idx].mimic_multiplier, joints_[mimic_idx].mimic_offset);
-    } else {
-      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), 
-        "Invalid mimic configuration: mimic_index %d or source_index %d out of range", 
-        mimic_idx, src_idx);
-    }
-  }
-
     if (info_.joints[i].parameters.find("control_mode") != info_.joints[i].parameters.end()) {
       joints_[i].control_mode = std::stoi(info_.joints[i].parameters.at("control_mode"));
       if (joints_[i].control_mode == 0 ||
@@ -143,6 +121,29 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
     RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "joint_id %d: %d", i, joint_ids_[i]);
   }
 
+
+  // Mimic Initialization
+  for (const auto & mimic_data : info_.mimic_joints) {
+    uint mimic_idx = mimic_data.joint_index;
+    uint src_idx = mimic_data.mimicked_joint_index;
+
+    if (mimic_idx < joints_.size() && src_idx < joints_.size()) {
+      joints_[mimic_idx].mimic_index = src_idx;
+      joints_[mimic_idx].mimic_multiplier = mimic_data.multiplier;
+      joints_[mimic_idx].mimic_offset = mimic_data.offset;
+
+      RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), 
+        "Mimic configured: Joint '%s' (index %d) follows '%s' (index %d) [mult: %f, offset: %f]", 
+        info_.joints[mimic_idx].name.c_str(), mimic_idx,
+        info_.joints[src_idx].name.c_str(), src_idx,
+        joints_[mimic_idx].mimic_multiplier, joints_[mimic_idx].mimic_offset);
+    } else {
+      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), 
+        "Invalid mimic configuration: mimic_index %d or source_index %d out of range", 
+        mimic_idx, src_idx);
+    }
+  }
+
   if (
     info_.hardware_parameters.find("use_dummy") != info_.hardware_parameters.end() &&
     (info_.hardware_parameters.at("use_dummy") == "true" ||
@@ -153,7 +154,6 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
     return CallbackReturn::SUCCESS;
   }
 
-  // TODO: multiple port support
   auto port_name = info_.hardware_parameters.at("port_name");
   auto baud_rate = std::stoi(info_.hardware_parameters.at("baud_rate"));
   const char * log = nullptr;
