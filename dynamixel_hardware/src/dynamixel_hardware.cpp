@@ -415,11 +415,10 @@ return_type DynamixelHardware::read(
       if(it != joint_ids_.end()){
         int index = std::distance(joint_ids_.begin(), it);
         joints_[index].state.position = dynamixel_workbench_.convertValue2Radian(
-          ids[i], positions[i]) / joints_[i].gear_ratio;
+          ids[i], positions[i]) / joints_[index].gear_ratio;
         joints_[index].state.velocity = dynamixel_workbench_.convertValue2Velocity(
-          ids[i], velocities[i]) / joints_[i].gear_ratio;
-        joints_[index].state.effort = dynamixel_workbench_.convertValue2Current(
-          currents[i]) * joints_[i].gear_ratio;
+          ids[i], velocities[i]) / joints_[index].gear_ratio;
+        joints_[index].state.effort = dynamixel_workbench_.convertValue2Current(ids[i], currents[i]) * joints_[index].gear_ratio;
       }
     }
   }
