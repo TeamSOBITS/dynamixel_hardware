@@ -47,6 +47,11 @@ struct Joint
   JointValue prev_command{};
   int control_mode{0};
   double gear_ratio{1.0};
+
+  // Mimic joint parameters
+  int mimic_index{-1};  // -1 if not a mimic joint, otherwise index of the source joint
+  double mimic_multiplier{1.0};
+  double mimic_offset{0.0};
 };
 
 enum class ControlMode
