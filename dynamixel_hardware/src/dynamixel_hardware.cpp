@@ -53,6 +53,7 @@ constexpr const char * const kExtraJointParameters[] = {
   "Feedforward_2nd_Gain",
   "Feedforward_1st_Gain",
   "Goal_Current",
+  "Return_Delay_Time",
 };
 
 CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComponentInterfaceParams & info)
@@ -620,8 +621,12 @@ return_type DynamixelHardware::set_control_mode()
         return return_type::ERROR;
       }
     } else if (joints_[i].control_mode == 6) {
-      if (!dynamixel_workbench_.setCurrentBasedPositionControlMode(joint_ids_[i], &log)) {
-        RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
+      // The workbench's setCurrentBasedPositionControlMode only whitelists MX-64-2 / MX-106-2.
+      // Write Operating_Mode=5 directly so XL330/XC330/XM/XH series are also handled.
+      if (!dynamixel_workbench_.itemWrite(joint_ids_[i], "Operating_Mode", 5, &log)) {
+        RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware),
+          "ID %d: failed to set current-based position mode via itemWrite (%s)",
+          joint_ids_[i], log);
         return return_type::ERROR;
       }
     } else if (joints_[i].control_mode == 7) {
@@ -659,17 +664,26 @@ return_type DynamixelHardware::reset_command()
 CallbackReturn DynamixelHardware::set_joint_positions()
 {
   sync_write_position_->clearParam();
+  bool any_changed = false;
   for (uint i = 0; i < joint_pos_ids_.size(); i++) {
     int ji = joint_pos_ids_[i];
     joints_[ji].prev_command.position = joints_[ji].command.position;
     int32_t value = dynamixel_workbench_.convertRadian2Value(
       joint_ids_[ji], static_cast<float>(joints_[ji].command.position * joints_[ji].gear_ratio));
+    if (value == joints_[ji].prev_pos_raw) {
+      continue;
+    }
+    joints_[ji].prev_pos_raw = value;
+    any_changed = true;
     uint8_t data[4];
     data[0] = DXL_LOBYTE(DXL_LOWORD(value));
     data[1] = DXL_HIBYTE(DXL_LOWORD(value));
     data[2] = DXL_LOBYTE(DXL_HIWORD(value));
     data[3] = DXL_HIBYTE(DXL_HIWORD(value));
     sync_write_position_->addParam(joint_pos_real_ids_[i], data);
+  }
+  if (!any_changed) {
+    return CallbackReturn::SUCCESS;
   }
   int result = sync_write_position_->txPacket();
   if (result != COMM_SUCCESS) {
@@ -682,17 +696,26 @@ CallbackReturn DynamixelHardware::set_joint_positions()
 CallbackReturn DynamixelHardware::set_joint_velocities()
 {
   sync_write_velocity_->clearParam();
+  bool any_changed = false;
   for (uint i = 0; i < joint_vel_ids_.size(); i++) {
     int ji = joint_vel_ids_[i];
     joints_[ji].prev_command.velocity = joints_[ji].command.velocity;
     int32_t value = dynamixel_workbench_.convertVelocity2Value(
       joint_ids_[ji], static_cast<float>(joints_[ji].command.velocity * joints_[ji].gear_ratio));
+    if (value == joints_[ji].prev_vel_raw) {
+      continue;
+    }
+    joints_[ji].prev_vel_raw = value;
+    any_changed = true;
     uint8_t data[4];
     data[0] = DXL_LOBYTE(DXL_LOWORD(value));
     data[1] = DXL_HIBYTE(DXL_LOWORD(value));
     data[2] = DXL_LOBYTE(DXL_HIWORD(value));
     data[3] = DXL_HIBYTE(DXL_HIWORD(value));
     sync_write_velocity_->addParam(joint_vel_real_ids_[i], data);
+  }
+  if (!any_changed) {
+    return CallbackReturn::SUCCESS;
   }
   int result = sync_write_velocity_->txPacket();
   if (result != COMM_SUCCESS) {
@@ -705,15 +728,24 @@ CallbackReturn DynamixelHardware::set_joint_velocities()
 CallbackReturn DynamixelHardware::set_joint_currents()
 {
   sync_write_current_->clearParam();
+  bool any_changed = false;
   for (uint i = 0; i < joint_curt_ids_.size(); i++) {
     int ji = joint_curt_ids_[i];
     joints_[ji].prev_command.effort = joints_[ji].command.effort;
     int16_t value = dynamixel_workbench_.convertCurrent2Value(
       joint_ids_[ji], static_cast<float>(joints_[ji].command.effort * joints_[ji].gear_ratio));
+    if (value == joints_[ji].prev_curt_raw) {
+      continue;
+    }
+    joints_[ji].prev_curt_raw = value;
+    any_changed = true;
     uint8_t data[2];
     data[0] = DXL_LOBYTE(value);
     data[1] = DXL_HIBYTE(value);
     sync_write_current_->addParam(joint_curt_real_ids_[i], data);
+  }
+  if (!any_changed) {
+    return CallbackReturn::SUCCESS;
   }
   int result = sync_write_current_->txPacket();
   if (result != COMM_SUCCESS) {

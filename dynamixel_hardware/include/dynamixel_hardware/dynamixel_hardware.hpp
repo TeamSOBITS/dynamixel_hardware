@@ -51,6 +51,11 @@ struct Joint
   int control_mode{0};
   double gear_ratio{1.0};
 
+  // Last raw integer values sent to the servo — skip SyncWrite when unchanged
+  int32_t prev_pos_raw{std::numeric_limits<int32_t>::min()};
+  int32_t prev_vel_raw{std::numeric_limits<int32_t>::min()};
+  int16_t prev_curt_raw{std::numeric_limits<int16_t>::min()};
+
   // Mimic joint parameters
   int mimic_index{-1};  // -1 if not a mimic joint, otherwise index of the source joint
   double mimic_multiplier{1.0};
