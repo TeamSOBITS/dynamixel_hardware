@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,10 +33,6 @@
 namespace dynamixel_hardware
 {
 constexpr const char * kDynamixelHardware = "DynamixelHardware";
-constexpr uint8_t kGoalPositionIndex = 0;
-constexpr uint8_t kGoalVelocityIndex = 1;
-constexpr uint8_t kGoalCurrentIndex = 2;
-constexpr uint8_t kPresentPositionVelocityCurrentIndex = 0;
 constexpr const char * kGoalPositionItem = "Goal_Position";
 constexpr const char * kGoalVelocityItem = "Goal_Velocity";
 constexpr const char * kGoalCurrentItem = "Goal_Current";
@@ -120,6 +117,10 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
       joint_ids_rs_.push_back(joint_ids_[i]);
     }
     RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "joint_id %d: %d", i, joint_ids_[i]);
+  }
+
+  for (int i = 0; i < static_cast<int>(joint_ids_.size()); ++i) {
+    joint_id_to_index_[joint_ids_[i]] = i;
   }
 
   // Mimic Initialization
@@ -226,39 +227,62 @@ CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComp
   control_items_[kPresentVelocityItem] = present_velocity;
   control_items_[kPresentCurrentItem] = present_current;
 
-  if (!dynamixel_workbench_.addSyncWriteHandler(
-      control_items_[kGoalPositionItem]->address, control_items_[kGoalPositionItem]->data_length,
-      &log))
+  // Extract the PortHandler* and PacketHandler* that the workbench opened.
+  // DynamixelDriver has no accessors for portHandler_/packetHandler_ (both are private),
+  // so we read them from the known object layout: portHandler_ is the first member at offset 0,
+  // packetHandler_ is the second member at offset 8 (on all 64-bit ABIs with no virtual methods).
+  // This avoids opening a second file descriptor on the same serial device.
   {
-    RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
+    uint8_t * base = reinterpret_cast<uint8_t *>(&dynamixel_workbench_);
+    port_handler_   = *reinterpret_cast<dynamixel::PortHandler **>(base);
+    packet_handler_ = *reinterpret_cast<dynamixel::PacketHandler **>(base + sizeof(void *));
+  }
+
+  if (port_handler_ == nullptr || packet_handler_ == nullptr) {
+    RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "Failed to obtain port/packet handlers from workbench");
     return CallbackReturn::ERROR;
   }
 
-  if (!dynamixel_workbench_.addSyncWriteHandler(
-      control_items_[kGoalVelocityItem]->address, control_items_[kGoalVelocityItem]->data_length,
-      &log))
-  {
-    RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
-    return CallbackReturn::ERROR;
-  }
-
-  if (!dynamixel_workbench_.addSyncWriteHandler(
-      control_items_[kGoalCurrentItem]->address, control_items_[kGoalCurrentItem]->data_length,
-      &log))
-  {
-    RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
-    return CallbackReturn::ERROR;
-  }
-
+  // Fast Sync Read (0x8A) — one consolidated Rx packet for all servos vs N individual packets.
   uint16_t start_address = std::min(
     control_items_[kPresentPositionItem]->address, control_items_[kPresentCurrentItem]->address);
-  uint16_t read_length = control_items_[kPresentPositionItem]->data_length +
+  uint16_t read_length = static_cast<uint16_t>(
+    control_items_[kPresentPositionItem]->data_length +
     control_items_[kPresentVelocityItem]->data_length +
-    control_items_[kPresentCurrentItem]->data_length + 2;
-  if (!dynamixel_workbench_.addSyncReadHandler(start_address, read_length, &log)) {
-    RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
-    return CallbackReturn::ERROR;
+    control_items_[kPresentCurrentItem]->data_length + 2);
+
+  if (!joint_ids_ttl_.empty()) {
+    fast_sync_read_ttl_ = std::make_unique<dynamixel::GroupFastSyncRead>(
+      port_handler_, packet_handler_, start_address, read_length);
+    for (auto id : joint_ids_ttl_) {
+      fast_sync_read_ttl_->addParam(id);
+    }
   }
+  if (!joint_ids_rs_.empty()) {
+    fast_sync_read_rs_ = std::make_unique<dynamixel::GroupFastSyncRead>(
+      port_handler_, packet_handler_, start_address, read_length);
+    for (auto id : joint_ids_rs_) {
+      fast_sync_read_rs_->addParam(id);
+    }
+  }
+
+  // GroupSyncWrite — direct SDK writes, same port as workbench
+  sync_write_position_ = std::make_unique<dynamixel::GroupSyncWrite>(
+    port_handler_, packet_handler_,
+    control_items_[kGoalPositionItem]->address,
+    control_items_[kGoalPositionItem]->data_length);
+
+  sync_write_velocity_ = std::make_unique<dynamixel::GroupSyncWrite>(
+    port_handler_, packet_handler_,
+    control_items_[kGoalVelocityItem]->address,
+    control_items_[kGoalVelocityItem]->data_length);
+
+  sync_write_current_ = std::make_unique<dynamixel::GroupSyncWrite>(
+    port_handler_, packet_handler_,
+    control_items_[kGoalCurrentItem]->address,
+    control_items_[kGoalCurrentItem]->data_length);
+
+  RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "Fast Sync Read (0x8A) enabled");
 
   return CallbackReturn::SUCCESS;
 }
@@ -373,59 +397,63 @@ return_type DynamixelHardware::read(
     return return_type::OK;
   }
 
-  std::vector<uint8_t>* ids_each[] = {nullptr, nullptr};
-  if(!joint_ids_ttl_.empty()){
-    ids_each[0] = &joint_ids_ttl_;
-  }
-  if(!joint_ids_rs_.empty()){
-    ids_each[1] = &joint_ids_rs_;
-  }
+  // Pairs of (servo id list, GroupFastSyncRead*) — one per physical bus (TTL, RS-485)
+  struct BusGroup {
+    std::vector<uint8_t> * ids;
+    dynamixel::GroupFastSyncRead * fast_reader;
+  };
+  BusGroup buses[] = {
+    {joint_ids_ttl_.empty() ? nullptr : &joint_ids_ttl_, fast_sync_read_ttl_.get()},
+    {joint_ids_rs_.empty()  ? nullptr : &joint_ids_rs_,  fast_sync_read_rs_.get()},
+  };
 
-  for(auto& idt: ids_each){
-    if(idt == nullptr){
+  for (auto & bus : buses) {
+    if (bus.ids == nullptr) {
       continue;
     }
 
-    std::vector<uint8_t> ids(idt->size(), 0);
-    std::vector<int32_t> positions(idt->size(), 0);
-    std::vector<int32_t> velocities(idt->size(), 0);
-    std::vector<int32_t> currents(idt->size(), 0);
-    std::copy(idt->begin(), idt->end(), ids.begin());
-    const char * log = nullptr;
+    const auto & ids = *bus.ids;
 
-    if (!dynamixel_workbench_.syncRead(
-          kPresentPositionVelocityCurrentIndex, ids.data(), ids.size(), &log)) {
-      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
+    int result = bus.fast_reader->txRxPacket();
+    if (result != COMM_SUCCESS) {
+      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware),
+        "Fast Sync Read failed: %s", packet_handler_->getTxRxResult(result));
     }
-    if (!dynamixel_workbench_.getSyncReadData(
-          kPresentPositionVelocityCurrentIndex, ids.data(), ids.size(),
-          control_items_[kPresentCurrentItem]->address,
-          control_items_[kPresentCurrentItem]->data_length, currents.data(), &log)) {
-      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
-    }
-    if (!dynamixel_workbench_.getSyncReadData(
-          kPresentPositionVelocityCurrentIndex, ids.data(), ids.size(),
-          control_items_[kPresentVelocityItem]->address,
-          control_items_[kPresentVelocityItem]->data_length, velocities.data(), &log)) {
-      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
-    }
-    if (!dynamixel_workbench_.getSyncReadData(
-          kPresentPositionVelocityCurrentIndex, ids.data(), ids.size(),
-          control_items_[kPresentPositionItem]->address,
-          control_items_[kPresentPositionItem]->data_length, positions.data(), &log)) {
-      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
-    }
-
-    for(uint i = 0; i < ids.size(); i++){
-      auto it = std::find(joint_ids_.begin(), joint_ids_.end(), ids[i]);
-      if(it != joint_ids_.end()){
-        int index = std::distance(joint_ids_.begin(), it);
-        joints_[index].state.position = dynamixel_workbench_.convertValue2Radian(
-          ids[i], positions[i]) / joints_[index].gear_ratio;
-        joints_[index].state.velocity = dynamixel_workbench_.convertValue2Velocity(
-          ids[i], velocities[i]) / joints_[index].gear_ratio;
-        joints_[index].state.effort = dynamixel_workbench_.convertValue2Current(ids[i], currents[i]) * joints_[index].gear_ratio;
+    for (uint8_t id : ids) {
+      auto map_it = joint_id_to_index_.find(id);
+      if (map_it == joint_id_to_index_.end()) {
+        continue;
       }
+      int index = map_it->second;
+
+      if (!bus.fast_reader->isAvailable(id, control_items_[kPresentPositionItem]->address,
+            control_items_[kPresentPositionItem]->data_length) ||
+          !bus.fast_reader->isAvailable(id, control_items_[kPresentVelocityItem]->address,
+            control_items_[kPresentVelocityItem]->data_length) ||
+          !bus.fast_reader->isAvailable(id, control_items_[kPresentCurrentItem]->address,
+            control_items_[kPresentCurrentItem]->data_length))
+      {
+        RCLCPP_WARN(rclcpp::get_logger(kDynamixelHardware),
+          "Fast Sync Read: no data for ID %d", id);
+        continue;
+      }
+
+      auto raw_pos = static_cast<int32_t>(bus.fast_reader->getData(
+        id, control_items_[kPresentPositionItem]->address,
+        control_items_[kPresentPositionItem]->data_length));
+      auto raw_vel = static_cast<int32_t>(bus.fast_reader->getData(
+        id, control_items_[kPresentVelocityItem]->address,
+        control_items_[kPresentVelocityItem]->data_length));
+      auto raw_cur = static_cast<int16_t>(bus.fast_reader->getData(
+        id, control_items_[kPresentCurrentItem]->address,
+        control_items_[kPresentCurrentItem]->data_length));
+
+      joints_[index].state.position =
+        dynamixel_workbench_.convertValue2Radian(id, raw_pos) / joints_[index].gear_ratio;
+      joints_[index].state.velocity =
+        dynamixel_workbench_.convertValue2Velocity(id, raw_vel) / joints_[index].gear_ratio;
+      joints_[index].state.effort =
+        dynamixel_workbench_.convertValue2Current(id, raw_cur) * joints_[index].gear_ratio;
     }
   }
 
@@ -630,60 +658,67 @@ return_type DynamixelHardware::reset_command()
 
 CallbackReturn DynamixelHardware::set_joint_positions()
 {
-  const char * log = nullptr;
-  std::vector<int32_t> commands(joint_pos_ids_.size(), 0);
-  std::vector<uint8_t> ids(joint_pos_ids_.size(), 0);
-
-  std::copy(joint_pos_ids_.begin(), joint_pos_ids_.end(), ids.begin());
-  for (uint i = 0; i < ids.size(); i++) {
-    joints_[ids[i]].prev_command.position = joints_[ids[i]].command.position;
-    commands[i] = dynamixel_workbench_.convertRadian2Value(
-      joint_ids_[ids[i]], static_cast<float>(joints_[ids[i]].command.position * joints_[ids[i]].gear_ratio));
+  sync_write_position_->clearParam();
+  for (uint i = 0; i < joint_pos_ids_.size(); i++) {
+    int ji = joint_pos_ids_[i];
+    joints_[ji].prev_command.position = joints_[ji].command.position;
+    int32_t value = dynamixel_workbench_.convertRadian2Value(
+      joint_ids_[ji], static_cast<float>(joints_[ji].command.position * joints_[ji].gear_ratio));
+    uint8_t data[4];
+    data[0] = DXL_LOBYTE(DXL_LOWORD(value));
+    data[1] = DXL_HIBYTE(DXL_LOWORD(value));
+    data[2] = DXL_LOBYTE(DXL_HIWORD(value));
+    data[3] = DXL_HIBYTE(DXL_HIWORD(value));
+    sync_write_position_->addParam(joint_pos_real_ids_[i], data);
   }
-  if (!dynamixel_workbench_.syncWrite(
-      kGoalPositionIndex, joint_pos_real_ids_.data(), ids.size(), commands.data(), 1, &log))
-  {
-    RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
+  int result = sync_write_position_->txPacket();
+  if (result != COMM_SUCCESS) {
+    RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware),
+      "SyncWrite position failed: %s", packet_handler_->getTxRxResult(result));
   }
   return CallbackReturn::SUCCESS;
 }
 
 CallbackReturn DynamixelHardware::set_joint_velocities()
 {
-  const char * log = nullptr;
-  std::vector<int32_t> commands(joint_vel_ids_.size(), 0);
-  std::vector<uint8_t> ids(joint_vel_ids_.size(), 0);
-
-  std::copy(joint_vel_ids_.begin(), joint_vel_ids_.end(), ids.begin());
-  for (uint i = 0; i < ids.size(); i++) {
-    joints_[ids[i]].prev_command.velocity = joints_[ids[i]].command.velocity;
-    commands[i] = dynamixel_workbench_.convertVelocity2Value(
-      joint_ids_[ids[i]], static_cast<float>(joints_[ids[i]].command.velocity * joints_[ids[i]].gear_ratio));
+  sync_write_velocity_->clearParam();
+  for (uint i = 0; i < joint_vel_ids_.size(); i++) {
+    int ji = joint_vel_ids_[i];
+    joints_[ji].prev_command.velocity = joints_[ji].command.velocity;
+    int32_t value = dynamixel_workbench_.convertVelocity2Value(
+      joint_ids_[ji], static_cast<float>(joints_[ji].command.velocity * joints_[ji].gear_ratio));
+    uint8_t data[4];
+    data[0] = DXL_LOBYTE(DXL_LOWORD(value));
+    data[1] = DXL_HIBYTE(DXL_LOWORD(value));
+    data[2] = DXL_LOBYTE(DXL_HIWORD(value));
+    data[3] = DXL_HIBYTE(DXL_HIWORD(value));
+    sync_write_velocity_->addParam(joint_vel_real_ids_[i], data);
   }
-  if (!dynamixel_workbench_.syncWrite(
-      kGoalVelocityIndex, joint_vel_real_ids_.data(), ids.size(), commands.data(), 1, &log))
-  {
-    RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
+  int result = sync_write_velocity_->txPacket();
+  if (result != COMM_SUCCESS) {
+    RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware),
+      "SyncWrite velocity failed: %s", packet_handler_->getTxRxResult(result));
   }
   return CallbackReturn::SUCCESS;
 }
 
 CallbackReturn DynamixelHardware::set_joint_currents()
 {
-  const char * log = nullptr;
-  std::vector<int32_t> commands(joint_curt_ids_.size(), 0);
-  std::vector<uint8_t> ids(joint_curt_ids_.size(), 0);
-
-  std::copy(joint_curt_ids_.begin(), joint_curt_ids_.end(), ids.begin());
-  for (uint i = 0; i < ids.size(); i++) {
-    joints_[ids[i]].prev_command.effort = joints_[ids[i]].command.effort;
-    commands[i] = dynamixel_workbench_.convertCurrent2Value(
-      joint_ids_[ids[i]], static_cast<float>(joints_[ids[i]].command.effort * joints_[ids[i]].gear_ratio));
+  sync_write_current_->clearParam();
+  for (uint i = 0; i < joint_curt_ids_.size(); i++) {
+    int ji = joint_curt_ids_[i];
+    joints_[ji].prev_command.effort = joints_[ji].command.effort;
+    int16_t value = dynamixel_workbench_.convertCurrent2Value(
+      joint_ids_[ji], static_cast<float>(joints_[ji].command.effort * joints_[ji].gear_ratio));
+    uint8_t data[2];
+    data[0] = DXL_LOBYTE(value);
+    data[1] = DXL_HIBYTE(value);
+    sync_write_current_->addParam(joint_curt_real_ids_[i], data);
   }
-  if (!dynamixel_workbench_.syncWrite(
-    kGoalCurrentIndex, joint_curt_real_ids_.data(), ids.size(), commands.data(), 1, &log))
-  {
-    RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware), "%s", log);
+  int result = sync_write_current_->txPacket();
+  if (result != COMM_SUCCESS) {
+    RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware),
+      "SyncWrite current failed: %s", packet_handler_->getTxRxResult(result));
   }
   return CallbackReturn::SUCCESS;
 }

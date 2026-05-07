@@ -16,8 +16,11 @@
 #define DYNAMIXEL_HARDWARE__DYNAMIXEL_HARDWARE_HPP_
 
 #include <dynamixel_workbench_toolbox/dynamixel_workbench.h>
+#include <dynamixel_sdk/dynamixel_sdk.h>
 
 #include <map>
+#include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include <hardware_interface/handle.hpp>
@@ -108,10 +111,15 @@ private:
   CallbackReturn set_joint_currents();
   CallbackReturn set_joint_params();
 
+  // Workbench is used only during init/configure for ping, getItemInfo,
+  // setXxxControlMode, itemWrite, torqueOn/Off, and unit conversion.
+  // All hot-path read/write uses the raw SDK objects below.
   DynamixelWorkbench dynamixel_workbench_;
   std::map<const char * const, const ControlItem *> control_items_;
+
   std::vector<Joint> joints_;
   std::vector<uint8_t> joint_ids_;
+  std::unordered_map<uint8_t, int> joint_id_to_index_;  // servo ID → joints_ index, O(1) lookup
   std::vector<uint8_t> joint_ids_ttl_;
   std::vector<uint8_t> joint_ids_rs_;
   std::vector<uint8_t> joint_pos_ids_;
@@ -122,6 +130,21 @@ private:
   std::vector<uint8_t> joint_curt_real_ids_;
   bool torque_enabled_{false};
   bool use_dummy_{false};
+
+  // Single shared port — obtained via PortHandler::getPortHandler() after workbench init,
+  // so workbench and all SDK objects below use the same file descriptor.
+  // Raw pointer: lifetime is managed by the SDK's internal singleton registry.
+  dynamixel::PortHandler *   port_handler_{nullptr};
+  dynamixel::PacketHandler * packet_handler_{nullptr};
+
+  // Fast Sync Read (0x8A) — one per physical bus (TTL / RS-485)
+  std::unique_ptr<dynamixel::GroupFastSyncRead> fast_sync_read_ttl_;
+  std::unique_ptr<dynamixel::GroupFastSyncRead> fast_sync_read_rs_;
+
+  // Sync Write — replaces workbench syncWrite() on the hot path
+  std::unique_ptr<dynamixel::GroupSyncWrite> sync_write_position_;
+  std::unique_ptr<dynamixel::GroupSyncWrite> sync_write_velocity_;
+  std::unique_ptr<dynamixel::GroupSyncWrite> sync_write_current_;
 };
 }  // namespace dynamixel_hardware
 
