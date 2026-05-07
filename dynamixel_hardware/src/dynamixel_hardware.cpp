@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
@@ -267,7 +268,7 @@ CallbackReturn DynamixelHardware::on_configure(const rclcpp_lifecycle::State & /
   RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "configure");
 
   for (uint i = 0; i < joints_.size(); i++) {
-    if (use_dummy_ && std::isnan(joints_[i].state.position)) {
+    if (std::isnan(joints_[i].state.position)) {
       joints_[i].state.position = 0.0;
       joints_[i].state.velocity = 0.0;
       joints_[i].state.effort = 0.0;
@@ -362,6 +363,12 @@ return_type DynamixelHardware::read(
   const rclcpp::Time & /* time */,
   const rclcpp::Duration & /* period */)
 {
+  std::vector<JointValue> prev_states;
+  prev_states.reserve(joints_.size());
+  for (const auto & joint : joints_) {
+    prev_states.push_back(joint.state);
+  }
+
   if (use_dummy_) {
     return return_type::OK;
   }
@@ -437,6 +444,18 @@ return_type DynamixelHardware::read(
       } else {
         joint.state.effort = 0.0; // Avoid division by zero, but this is a non-physical case
       }
+    }
+  }
+
+  for (uint i = 0; i < joints_.size(); ++i) {
+    if (std::isnan(joints_[i].state.position)) {
+      joints_[i].state.position = std::isnan(prev_states[i].position) ? 0.0 : prev_states[i].position;
+    }
+    if (std::isnan(joints_[i].state.velocity)) {
+      joints_[i].state.velocity = std::isnan(prev_states[i].velocity) ? 0.0 : prev_states[i].velocity;
+    }
+    if (std::isnan(joints_[i].state.effort)) {
+      joints_[i].state.effort = std::isnan(prev_states[i].effort) ? 0.0 : prev_states[i].effort;
     }
   }
 
