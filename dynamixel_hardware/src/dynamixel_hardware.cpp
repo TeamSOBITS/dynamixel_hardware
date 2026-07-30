@@ -56,6 +56,36 @@ constexpr const char * const kExtraJointParameters[] = {
   "Return_Delay_Time",
 };
 
+DynamixelHardware::~DynamixelHardware()
+{
+  // The controller manager destroys hardware components on process exit
+  // (Ctrl+C / SIGTERM) without running the on_cleanup/on_shutdown transitions,
+  // so torque release must happen here or servos stay stiff after shutdown and
+  // the next launch's EEPROM writes (Operating_Mode etc.) get rejected.
+  //
+  // Per-servo torqueOff round-trips are too slow here: the launcher escalates
+  // to SIGKILL during teardown and other components' threads may still occupy
+  // a shared port, so half the servos end up skipped. One broadcast Sync Write
+  // (single TX packet, no status replies) releases every servo at once.
+  if (use_dummy_ || port_handler_ == nullptr) {
+    return;
+  }
+  const ControlItem * torque_enable =
+    dynamixel_workbench_.getItemInfo(joint_ids_[0], "Torque_Enable");
+  if (torque_enable == nullptr) {
+    return;
+  }
+  dynamixel::GroupSyncWrite sync_write_torque(
+    port_handler_, packet_handler_, torque_enable->address, torque_enable->data_length);
+  uint8_t off[4] = {0, 0, 0, 0};
+  for (uint8_t id : joint_ids_) {
+    sync_write_torque.addParam(id, off);
+  }
+  if (sync_write_torque.txPacket() == COMM_SUCCESS) {
+    RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "Torque disabled (shutdown broadcast)");
+  }
+}
+
 CallbackReturn DynamixelHardware::on_init(const hardware_interface::HardwareComponentInterfaceParams & info)
 {
   RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "on_init");
