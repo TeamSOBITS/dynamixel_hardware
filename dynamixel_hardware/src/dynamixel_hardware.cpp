@@ -305,12 +305,27 @@ CallbackReturn DynamixelHardware::on_configure(const rclcpp_lifecycle::State & /
     return CallbackReturn::ERROR;
   }
 
-  enable_torque(false);
-  set_control_mode();
-  set_joint_params();
-  // Ideally torque should be enabled in on_activate(), but this appears to cause issues 
+  if (use_dummy_) {
+    return CallbackReturn::SUCCESS;
+  }
+
+  // Servos keep torque across a relaunch and reject EEPROM writes (Operating_Mode,
+  // Return_Delay_Time, ...) while torque is on, so force a real torque-off here —
+  // torque_enabled_ still holds its initial value and cannot be trusted.
+  if (enable_torque(false, true) != return_type::OK) {
+    return CallbackReturn::ERROR;
+  }
+  if (set_control_mode() != return_type::OK) {
+    return CallbackReturn::ERROR;
+  }
+  if (set_joint_params() != CallbackReturn::SUCCESS) {
+    return CallbackReturn::ERROR;
+  }
+  // Ideally torque should be enabled in on_activate(), but this appears to cause issues
   // due to conflict with RT loop read/write calls, so it is here instead
-  enable_torque(true);
+  if (enable_torque(true) != return_type::OK) {
+    return CallbackReturn::ERROR;
+  }
 
   return CallbackReturn::SUCCESS;
 }
@@ -554,11 +569,11 @@ return_type DynamixelHardware::write(
   return return_type::OK;
 }
 
-return_type DynamixelHardware::enable_torque(const bool enabled)
+return_type DynamixelHardware::enable_torque(const bool enabled, const bool force)
 {
   const char * log = nullptr;
 
-  if (enabled && !torque_enabled_) {
+  if (enabled && (!torque_enabled_ || force)) {
     for (uint i = 0; i < info_.joints.size(); ++i) {
       if (!dynamixel_workbench_.torqueOn(joint_ids_[i], &log)) {
         RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);
@@ -566,7 +581,7 @@ return_type DynamixelHardware::enable_torque(const bool enabled)
       }
     }
     RCLCPP_INFO(rclcpp::get_logger(kDynamixelHardware), "Torque enabled");
-  } else if (!enabled && torque_enabled_) {
+  } else if (!enabled && (torque_enabled_ || force)) {
     for (uint i = 0; i < info_.joints.size(); ++i) {
       if (!dynamixel_workbench_.torqueOff(joint_ids_[i], &log)) {
         RCLCPP_FATAL(rclcpp::get_logger(kDynamixelHardware), "%s", log);

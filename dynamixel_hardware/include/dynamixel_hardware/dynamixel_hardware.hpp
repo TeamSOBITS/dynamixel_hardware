@@ -105,7 +105,7 @@ public:
   return_type write(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
 private:
-  return_type enable_torque(const bool enabled);
+  return_type enable_torque(const bool enabled, const bool force = false);
 
   return_type set_control_mode();
 
