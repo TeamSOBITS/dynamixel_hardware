@@ -58,15 +58,8 @@ constexpr const char * const kExtraJointParameters[] = {
 
 DynamixelHardware::~DynamixelHardware()
 {
-  // The controller manager destroys hardware components on process exit
-  // (Ctrl+C / SIGTERM) without running the on_cleanup/on_shutdown transitions,
-  // so torque release must happen here or servos stay stiff after shutdown and
-  // the next launch's EEPROM writes (Operating_Mode etc.) get rejected.
-  //
-  // Per-servo torqueOff round-trips are too slow here: the launcher escalates
-  // to SIGKILL during teardown and other components' threads may still occupy
-  // a shared port, so half the servos end up skipped. One broadcast Sync Write
-  // (single TX packet, no status replies) releases every servo at once.
+  // Lifecycle transitions may not run on exit (SIGTERM/SIGKILL), so release torque
+  // here too, via one broadcast Sync Write since per-servo round-trips are too slow.
   if (use_dummy_ || port_handler_ == nullptr) {
     return;
   }
@@ -339,9 +332,8 @@ CallbackReturn DynamixelHardware::on_configure(const rclcpp_lifecycle::State & /
     return CallbackReturn::SUCCESS;
   }
 
-  // Servos keep torque across a relaunch and reject EEPROM writes (Operating_Mode,
-  // Return_Delay_Time, ...) while torque is on, so force a real torque-off here —
-  // torque_enabled_ still holds its initial value and cannot be trusted.
+  // torque_enabled_ can't be trusted after a restart, so force a real torque-off
+  // before the EEPROM writes below, which are rejected while torque is on.
   if (enable_torque(false, true) != return_type::OK) {
     return CallbackReturn::ERROR;
   }
@@ -480,9 +472,7 @@ return_type DynamixelHardware::read(
 
     int result = bus.fast_reader->txRxPacket();
     if (result != COMM_SUCCESS) {
-      // Chained-reply corruption (e.g. marginal TTL wiring) is transient; an
-      // immediate retry is a fresh transaction and usually succeeds, keeping
-      // this cycle's data instead of freezing states for a full period.
+      // Transient corruption is common on marginal wiring; retry once before giving up.
       result = bus.fast_reader->txRxPacket();
     }
     if (result != COMM_SUCCESS) {
