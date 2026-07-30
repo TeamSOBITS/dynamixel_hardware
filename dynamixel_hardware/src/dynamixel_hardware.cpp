@@ -480,8 +480,16 @@ return_type DynamixelHardware::read(
 
     int result = bus.fast_reader->txRxPacket();
     if (result != COMM_SUCCESS) {
-      RCLCPP_ERROR(rclcpp::get_logger(kDynamixelHardware),
-        "Fast Sync Read failed: %s", packet_handler_->getTxRxResult(result));
+      // Chained-reply corruption (e.g. marginal TTL wiring) is transient; an
+      // immediate retry is a fresh transaction and usually succeeds, keeping
+      // this cycle's data instead of freezing states for a full period.
+      result = bus.fast_reader->txRxPacket();
+    }
+    if (result != COMM_SUCCESS) {
+      RCLCPP_ERROR_THROTTLE(rclcpp::get_logger(kDynamixelHardware), steady_clock_, 1000,
+        "Fast Sync Read failed even after retry, keeping previous states: %s",
+        packet_handler_->getTxRxResult(result));
+      continue;  // whole group missing — per-ID checks below would all fail too
     }
     for (uint8_t id : ids) {
       auto map_it = joint_id_to_index_.find(id);
@@ -497,7 +505,7 @@ return_type DynamixelHardware::read(
           !bus.fast_reader->isAvailable(id, control_items_[kPresentCurrentItem]->address,
             control_items_[kPresentCurrentItem]->data_length))
       {
-        RCLCPP_WARN(rclcpp::get_logger(kDynamixelHardware),
+        RCLCPP_WARN_THROTTLE(rclcpp::get_logger(kDynamixelHardware), steady_clock_, 1000,
           "Fast Sync Read: no data for ID %d", id);
         continue;
       }

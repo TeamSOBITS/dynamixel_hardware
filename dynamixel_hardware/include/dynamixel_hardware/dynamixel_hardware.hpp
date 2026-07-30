@@ -26,6 +26,7 @@
 #include <hardware_interface/handle.hpp>
 #include <hardware_interface/hardware_info.hpp>
 #include <hardware_interface/system_interface.hpp>
+#include <rclcpp/clock.hpp>
 #include <rclcpp_lifecycle/state.hpp>
 
 #include "dynamixel_hardware/visiblity_control.h"
@@ -144,6 +145,8 @@ private:
   std::vector<uint8_t> joint_curt_real_ids_;
   bool torque_enabled_{false};
   bool use_dummy_{false};
+
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};  // for throttled comm-failure logging
 
   // Single shared port — obtained via PortHandler::getPortHandler() after workbench init,
   // so workbench and all SDK objects below use the same file descriptor.
