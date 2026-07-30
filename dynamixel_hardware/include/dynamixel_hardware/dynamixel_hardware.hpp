@@ -99,6 +99,12 @@ public:
   CallbackReturn on_deactivate(const rclcpp_lifecycle::State & previous_state) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State & previous_state) override;
+
+  DYNAMIXEL_HARDWARE_PUBLIC
+  CallbackReturn on_shutdown(const rclcpp_lifecycle::State & previous_state) override;
+
+  DYNAMIXEL_HARDWARE_PUBLIC
   return_type read(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC

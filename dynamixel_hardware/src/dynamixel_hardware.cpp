@@ -330,8 +330,6 @@ CallbackReturn DynamixelHardware::on_configure(const rclcpp_lifecycle::State & /
   return CallbackReturn::SUCCESS;
 }
 
-// TODO - add on_cleanup to disable torque
-
 std::vector<hardware_interface::StateInterface> DynamixelHardware::export_state_interfaces()
 {
   RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "export_state_interfaces");
@@ -396,6 +394,26 @@ CallbackReturn DynamixelHardware::on_deactivate(
   const rclcpp_lifecycle::State & /* previous_state */)
 {
   RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "deactivate");
+  return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn DynamixelHardware::on_cleanup(
+  const rclcpp_lifecycle::State & /* previous_state */)
+{
+  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "cleanup");
+  if (!use_dummy_ && port_handler_ != nullptr) {
+    enable_torque(false, true);
+  }
+  return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn DynamixelHardware::on_shutdown(
+  const rclcpp_lifecycle::State & /* previous_state */)
+{
+  RCLCPP_DEBUG(rclcpp::get_logger(kDynamixelHardware), "shutdown");
+  if (!use_dummy_ && port_handler_ != nullptr) {
+    enable_torque(false, true);
+  }
   return CallbackReturn::SUCCESS;
 }
 
