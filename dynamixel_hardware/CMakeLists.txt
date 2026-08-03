@@ -23,6 +23,7 @@ find_package(lifecycle_msgs REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(dynamixel_workbench_toolbox REQUIRED)
+find_package(dynamixel_sdk REQUIRED)
 
 add_library(
   ${PROJECT_NAME}
@@ -42,6 +43,7 @@ ament_target_dependencies(
   hardware_interface
   pluginlib
   dynamixel_workbench_toolbox
+  dynamixel_sdk
 )
 
 

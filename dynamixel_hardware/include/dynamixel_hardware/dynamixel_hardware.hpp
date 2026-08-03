@@ -16,13 +16,17 @@
 #define DYNAMIXEL_HARDWARE__DYNAMIXEL_HARDWARE_HPP_
 
 #include <dynamixel_workbench_toolbox/dynamixel_workbench.h>
+#include <dynamixel_sdk/dynamixel_sdk.h>
 
 #include <map>
+#include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include <hardware_interface/handle.hpp>
 #include <hardware_interface/hardware_info.hpp>
 #include <hardware_interface/system_interface.hpp>
+#include <rclcpp/clock.hpp>
 #include <rclcpp_lifecycle/state.hpp>
 
 #include "dynamixel_hardware/visiblity_control.h"
@@ -47,6 +51,11 @@ struct Joint
   JointValue prev_command{};
   int control_mode{0};
   double gear_ratio{1.0};
+
+  // Last raw integer values sent to the servo — skip SyncWrite when unchanged
+  int32_t prev_pos_raw{std::numeric_limits<int32_t>::min()};
+  int32_t prev_vel_raw{std::numeric_limits<int32_t>::min()};
+  int16_t prev_curt_raw{std::numeric_limits<int16_t>::min()};
 
   // Mimic joint parameters
   int mimic_index{-1};  // -1 if not a mimic joint, otherwise index of the source joint
@@ -73,6 +82,9 @@ public:
   RCLCPP_SHARED_PTR_DEFINITIONS(DynamixelHardware)
 
   DYNAMIXEL_HARDWARE_PUBLIC
+  ~DynamixelHardware() override;
+
+  DYNAMIXEL_HARDWARE_PUBLIC
   CallbackReturn on_init(const hardware_interface::HardwareComponentInterfaceParams & info) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
@@ -91,13 +103,19 @@ public:
   CallbackReturn on_deactivate(const rclcpp_lifecycle::State & previous_state) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State & previous_state) override;
+
+  DYNAMIXEL_HARDWARE_PUBLIC
+  CallbackReturn on_shutdown(const rclcpp_lifecycle::State & previous_state) override;
+
+  DYNAMIXEL_HARDWARE_PUBLIC
   return_type read(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
   return_type write(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
 private:
-  return_type enable_torque(const bool enabled);
+  return_type enable_torque(const bool enabled, const bool force = false);
 
   return_type set_control_mode();
 
@@ -108,10 +126,15 @@ private:
   CallbackReturn set_joint_currents();
   CallbackReturn set_joint_params();
 
+  // Workbench is used only during init/configure for ping, getItemInfo,
+  // setXxxControlMode, itemWrite, torqueOn/Off, and unit conversion.
+  // All hot-path read/write uses the raw SDK objects below.
   DynamixelWorkbench dynamixel_workbench_;
   std::map<const char * const, const ControlItem *> control_items_;
+
   std::vector<Joint> joints_;
   std::vector<uint8_t> joint_ids_;
+  std::unordered_map<uint8_t, int> joint_id_to_index_;  // servo ID → joints_ index, O(1) lookup
   std::vector<uint8_t> joint_ids_ttl_;
   std::vector<uint8_t> joint_ids_rs_;
   std::vector<uint8_t> joint_pos_ids_;
@@ -122,6 +145,23 @@ private:
   std::vector<uint8_t> joint_curt_real_ids_;
   bool torque_enabled_{false};
   bool use_dummy_{false};
+
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};  // for throttled comm-failure logging
+
+  // Single shared port — obtained via PortHandler::getPortHandler() after workbench init,
+  // so workbench and all SDK objects below use the same file descriptor.
+  // Raw pointer: lifetime is managed by the SDK's internal singleton registry.
+  dynamixel::PortHandler *   port_handler_{nullptr};
+  dynamixel::PacketHandler * packet_handler_{nullptr};
+
+  // Fast Sync Read (0x8A) — one per physical bus (TTL / RS-485)
+  std::unique_ptr<dynamixel::GroupFastSyncRead> fast_sync_read_ttl_;
+  std::unique_ptr<dynamixel::GroupFastSyncRead> fast_sync_read_rs_;
+
+  // Sync Write — replaces workbench syncWrite() on the hot path
+  std::unique_ptr<dynamixel::GroupSyncWrite> sync_write_position_;
+  std::unique_ptr<dynamixel::GroupSyncWrite> sync_write_velocity_;
+  std::unique_ptr<dynamixel::GroupSyncWrite> sync_write_current_;
 };
 }  // namespace dynamixel_hardware
 
